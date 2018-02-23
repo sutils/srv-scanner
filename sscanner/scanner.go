@@ -241,7 +241,7 @@ func (c CmdWarner) OnWarning(task *Task, err error) (back interface{}) {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_MISSING=%v", util.S2Json(task.Missing)))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_MISSING_SIZE=%v", len(task.Missing)))
 	bys, xerr := cmd.CombinedOutput()
-	if err != nil {
+	if xerr != nil {
 		log.E("CmdWarnner run fail with %v:%v", xerr, string(bys))
 	} else {
 		log.D("CmdWarnner run warning message done with %v", string(bys))

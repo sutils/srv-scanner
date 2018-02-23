@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+
+	"github.com/Centny/gwf/log"
 )
 
 var tcpPortRegex = regexp.MustCompile("[0-9]+/tcp\\s+[^\\s]*")
@@ -54,6 +56,7 @@ func (n *NMAP) scanTCP() (ports map[int]string, err error) {
 	output, err := n.Cmd.CombinedOutput()
 	n.Output = string(output)
 	if err != nil {
+		log.E("NMAP run cmds(%v %v) fail with out:\n%v", n.Cmd.Path, n.Cmd.Args, n.Output)
 		return
 	}
 	ports = map[int]string{}
@@ -76,7 +79,9 @@ func (n *NMAP) scanUDP() (ports map[int]string, err error) {
 	// cmds := fmt.Sprintf("%v -sU --min-rate 5000 -p %v-%v %v", n.Bin, n.Ranges[0], n.Ranges[1], n.Host)
 	// n.Cmd = exec.Command("bash", "-c", cmds)
 	output, err := n.Cmd.CombinedOutput()
+	n.Output = string(output)
 	if err != nil {
+		log.E("NMAP run cmds(%v %v) fail with out:\n%v", n.Cmd.Path, n.Cmd.Args, n.Output)
 		return
 	}
 	ports = map[int]string{}
