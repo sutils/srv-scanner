@@ -8,15 +8,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Centny/gwf/routing"
+
 	"github.com/Centny/gwf/log"
 
 	"github.com/Centny/gwf/util"
 )
 
+//Warner is the interface of callback.
 type Warner interface {
-	OnWarning(task *Task, err error)
+	//
+	OnWarning(task *Task, err error) (back interface{})
 }
 
+//Task is the scan task by host/protocol
 type Task struct {
 	Host      string
 	Protocol  string
@@ -38,23 +43,32 @@ type Scanner struct {
 	TCP    bool
 	UDP    bool
 	Warner Warner
+
+	//
+	recorder    util.Map
+	recorderLck sync.RWMutex
 }
 
+//NewScanner is the creator of Scanner.
 func NewScanner(tcp, udp bool) *Scanner {
 	return &Scanner{
-		tcpTasks: make(chan *Task, 1000),
-		udpTasks: make(chan *Task, 1000),
-		lck:      sync.RWMutex{},
-		TCP:      tcp,
-		UDP:      udp,
-		Warner:   &NoneWarner{},
+		tcpTasks:    make(chan *Task, 1000),
+		udpTasks:    make(chan *Task, 1000),
+		lck:         sync.RWMutex{},
+		TCP:         tcp,
+		UDP:         udp,
+		Warner:      &NoneWarner{},
+		recorder:    util.Map{},
+		recorderLck: sync.RWMutex{},
 	}
 }
 
-func (s *Scanner) Scan(cfg *util.Fcfg) (err error) {
+//Scan will send the scan task to runner pool by configure.
+func (s *Scanner) Scan(cfg *util.Fcfg) {
 	s.lck.Lock()
 	defer s.lck.Unlock()
 	hosts := strings.Split(cfg.Val2("hosts", ""), ",")
+	var err error
 	for _, host := range hosts {
 		wlConf := cfg.Val2(host, "")
 		wlLines := strings.Split(wlConf, "\n")
@@ -116,19 +130,24 @@ func (s *Scanner) Scan(cfg *util.Fcfg) (err error) {
 			s.udpTasks <- task
 		}
 	}
-	return
 }
 
 func (s *Scanner) runner(runid int, tasks chan *Task) {
 	log.D("Scanner(%v) is started", runid)
 	for s.running {
 		task := <-tasks
+		last := util.Map{}
 		task.nmap = NewNMAP(task.Host, task.Protocol)
 		task.nmap.Ranges = task.Ranges
 		ports, err := task.nmap.Scan()
 		if err != nil {
 			log.E("Scanner(%v) scan %v/%v fail with %v", runid, task.Host, task.Protocol, err)
-			s.Warner.OnWarning(task, err)
+			last["error"] = err.Error()
+			last["warn"] = s.Warner.OnWarning(task, err)
+			last["last"] = util.Now()
+			s.recorderLck.Lock()
+			s.recorder[fmt.Sprintf("%v/%v", task.Host, task.Protocol)] = last
+			s.recorderLck.Unlock()
 			continue
 		}
 		for port, status := range ports {
@@ -144,13 +163,31 @@ func (s *Scanner) runner(runid int, tasks chan *Task) {
 		log.D("Scanner(%v) scan %v/%v done with \n new:%v\n missing:%v", runid,
 			task.Host, task.Protocol, util.S2Json(task.New), util.S2Json(task.Missing))
 		// if len(task.New) != 0 || len(task.Missing) != 0 {
-		s.Warner.OnWarning(task, nil)
+		back := s.Warner.OnWarning(task, nil)
 		// }
+		//
+		newRecord := util.Map{}
+		for port, status := range task.New {
+			newRecord[fmt.Sprintf("%v", port)] = status
+		}
+		missingRecord := util.Map{}
+		for port, status := range task.Missing {
+			missingRecord[fmt.Sprintf("%v", port)] = status
+		}
+		last["error"] = nil
+		last["warn"] = back
+		last["new"] = newRecord
+		last["missing"] = missingRecord
+		last["last"] = util.Now()
+		s.recorderLck.Lock()
+		s.recorder[fmt.Sprintf("%v/%v", task.Host, task.Protocol)] = last
+		s.recorderLck.Unlock()
 
 	}
 	log.D("Scanner(%v) is stopped", runid)
 }
 
+//Start will start the scan task runner.
 func (s *Scanner) Start(tcp, udp int) {
 	s.running = true
 	runid := 0
@@ -164,24 +201,36 @@ func (s *Scanner) Start(tcp, udp int) {
 	}
 }
 
+//StatusH is the web handler to show the current status.
+func (s *Scanner) StatusH(hs *routing.HTTPSession) routing.HResult {
+	s.recorderLck.RLock()
+	defer s.recorderLck.RUnlock()
+	return hs.JRes(s.recorder)
+}
+
+//NoneWarner is default warner to do nothing.
 type NoneWarner struct {
 }
 
-func (n *NoneWarner) OnWarning(task *Task, err error) {
-
+//OnWarning is the callback on one taks is completed.
+func (n *NoneWarner) OnWarning(task *Task, err error) (back interface{}) {
+	return
 }
 
+//CmdWarner is the warner by sending task result to command
 type CmdWarner struct {
-	Cmds string
+	Cmds string //the command string
 }
 
+//NewCmdWarner is the creator of CmdWarner by command string.
 func NewCmdWarner(cmds string) *CmdWarner {
 	return &CmdWarner{
 		Cmds: cmds,
 	}
 }
 
-func (c CmdWarner) OnWarning(task *Task, err error) {
+//OnWarning is the callback on one taks is completed.
+func (c CmdWarner) OnWarning(task *Task, err error) (back interface{}) {
 	cmd := exec.Command("bash", "-c", c.Cmds)
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_ERROR=%v", err))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_HOST=%v", task.Host))
@@ -196,4 +245,6 @@ func (c CmdWarner) OnWarning(task *Task, err error) {
 	} else {
 		log.D("CmdWarnner run warning message done with %v", string(bys))
 	}
+	back = xerr
+	return
 }

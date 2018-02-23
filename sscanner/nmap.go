@@ -51,7 +51,6 @@ func (n *NMAP) scanTCP() (ports map[int]string, err error) {
 	n.Cmd = exec.Command(n.Bin, "-sS", "-O", "-p", ranges, n.Host)
 	// cmds := fmt.Sprintf("%v -sS -p %v-%v %v", n.Bin, n.Ranges[0], n.Ranges[1], n.Host)
 	// n.Cmd = exec.Command("bash", "-c", cmds)
-	n.Cmd.Stdin = nil
 	output, err := n.Cmd.CombinedOutput()
 	n.Output = string(output)
 	if err != nil {
@@ -76,7 +75,6 @@ func (n *NMAP) scanUDP() (ports map[int]string, err error) {
 	n.Cmd = exec.Command(n.Bin, "-sU", "--min-rate", "5000", "-O", "-p", ranges, n.Host)
 	// cmds := fmt.Sprintf("%v -sU --min-rate 5000 -p %v-%v %v", n.Bin, n.Ranges[0], n.Ranges[1], n.Host)
 	// n.Cmd = exec.Command("bash", "-c", cmds)
-	n.Cmd.Stdin = nil
 	output, err := n.Cmd.CombinedOutput()
 	if err != nil {
 		return
