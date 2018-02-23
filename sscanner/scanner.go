@@ -132,8 +132,8 @@ func (s *Scanner) Scan(cfg *util.Fcfg) {
 	}
 }
 
-func (s *Scanner) runner(runid int, tasks chan *Task) {
-	log.D("Scanner(%v) is started", runid)
+func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
+	log.D("Scanner(%v/%v) is started", name, runid)
 	for s.running {
 		task := <-tasks
 		last := util.Map{}
@@ -162,9 +162,10 @@ func (s *Scanner) runner(runid int, tasks chan *Task) {
 		}
 		log.D("Scanner(%v) scan %v/%v done with \n new:%v\n missing:%v", runid,
 			task.Host, task.Protocol, util.S2Json(task.New), util.S2Json(task.Missing))
-		// if len(task.New) != 0 || len(task.Missing) != 0 {
-		back := s.Warner.OnWarning(task, nil)
-		// }
+		var warn interface{} = "NONE"
+		if len(task.New) != 0 || len(task.Missing) != 0 {
+			warn = s.Warner.OnWarning(task, nil)
+		}
 		//
 		newRecord := util.Map{}
 		for port, status := range task.New {
@@ -175,7 +176,7 @@ func (s *Scanner) runner(runid int, tasks chan *Task) {
 			missingRecord[fmt.Sprintf("%v", port)] = status
 		}
 		last["error"] = nil
-		last["warn"] = back
+		last["warn"] = warn
 		last["new"] = newRecord
 		last["missing"] = missingRecord
 		last["last"] = util.Now()
@@ -184,7 +185,7 @@ func (s *Scanner) runner(runid int, tasks chan *Task) {
 		s.recorderLck.Unlock()
 
 	}
-	log.D("Scanner(%v) is stopped", runid)
+	log.D("Scanner(%v/%v) is stopped", name, runid)
 }
 
 //Start will start the scan task runner.
@@ -192,11 +193,11 @@ func (s *Scanner) Start(tcp, udp int) {
 	s.running = true
 	runid := 0
 	for i := 0; i < tcp; i++ {
-		go s.runner(runid, s.tcpTasks)
+		go s.runner("tcp", runid, s.tcpTasks)
 		runid++
 	}
 	for i := 0; i < udp; i++ {
-		go s.runner(runid, s.udpTasks)
+		go s.runner("udp", runid, s.udpTasks)
 		runid++
 	}
 }

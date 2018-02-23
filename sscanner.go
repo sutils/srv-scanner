@@ -13,34 +13,40 @@ import (
 
 func main() {
 	//load configure
-	cfgfile := "conf/sscanner.conf"
+	cfgfile = "conf/sscanner.conf"
 	if len(os.Args) > 1 {
 		cfgfile = os.Args[1]
 	}
-	sharedConf.InitWithUri(cfgfile)
-	sharedConf.InitWithData(sharedConf.Val2("conf", ""))
-	sharedConf.SetVal("conf", "")
-	sharedConf.Print()
+	conf := loadConf()
+	conf.Print()
 	//
 	//initial scanner.
-	sharedScanner = sscanner.NewScanner(sharedConf.IntValV("enable_tcp", 0) > 0, sharedConf.IntValV("enable_udp", 0) > 0)
-	sharedScanner.Warner = sscanner.NewCmdWarner(sharedConf.Val2("warner", ""))
-	sharedScanner.Start(util.CPU(), util.CPU())
+	sharedScanner = sscanner.NewScanner(conf.IntValV("enable_tcp", 0) > 0, conf.IntValV("enable_udp", 0) > 0)
+	sharedScanner.Warner = sscanner.NewCmdWarner(conf.Val2("warner", ""))
+	sharedScanner.Start(conf.IntValV("tcp_runner", util.CPU()), conf.IntValV("udp_runner", util.CPU()))
 	//
 	//initial schedule
-	timer.Register5(sharedConf.Int64ValV("delay", 300000), onTime, false, true)
+	timer.Register5(conf.Int64ValV("delay", 300000), onTime, false, true)
 	//
 	//start web server.
 	routing.HFunc("^/adm/status(\\?.*)?$", sharedScanner.StatusH)
-	log.I("listen web server on %v", sharedConf.Val2("listen", ""))
-	fmt.Println(routing.ListenAndServe(sharedConf.Val2("listen", "")))
+	log.I("listen web server on %v", conf.Val2("listen", ""))
+	fmt.Println(routing.ListenAndServe(conf.Val2("listen", "")))
 }
 
-var sharedConf = util.NewFcfg3()
+var cfgfile = "conf/sscanner.conf"
 var sharedScanner *sscanner.Scanner
 
 func onTime(i uint64) error {
 	log.I("Scanner start %v scan", i)
-	sharedScanner.Scan(sharedConf)
+	sharedScanner.Scan(loadConf())
 	return nil
+}
+
+func loadConf() *util.Fcfg {
+	conf := util.NewFcfg3()
+	conf.InitWithUri(cfgfile)
+	conf.InitWithData(conf.Val2("conf", ""))
+	conf.SetVal("conf", "")
+	return conf
 }
