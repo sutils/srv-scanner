@@ -13,9 +13,6 @@ func TestScanner(t *testing.T) {
 	scanner := NewScanner(true, true)
 	scanner.Warner = NewCmdWarner(cfg.Val2("warner", ""))
 	scanner.Start(3, 3)
-	err := scanner.Scan(cfg)
-	if err != nil {
-		t.Error(err)
-	}
+	scanner.Scan("testing", cfg)
 	time.Sleep(5 * time.Second)
 }

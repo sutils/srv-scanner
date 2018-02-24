@@ -23,6 +23,7 @@ type Warner interface {
 
 //Task is the scan task by host/protocol
 type Task struct {
+	GID       string //the group id of task
 	Host      string
 	Protocol  string
 	Ranges    [2]int
@@ -64,7 +65,7 @@ func NewScanner(tcp, udp bool) *Scanner {
 }
 
 //Scan will send the scan task to runner pool by configure.
-func (s *Scanner) Scan(cfg *util.Fcfg) {
+func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 	s.lck.Lock()
 	defer s.lck.Unlock()
 	hosts := strings.Split(cfg.Val2("hosts", ""), ",")
@@ -109,6 +110,7 @@ func (s *Scanner) Scan(cfg *util.Fcfg) {
 		}
 		if s.TCP {
 			task := &Task{
+				GID:       gid,
 				Host:      host,
 				Protocol:  "tcp",
 				Ranges:    ranges,
@@ -120,6 +122,7 @@ func (s *Scanner) Scan(cfg *util.Fcfg) {
 		}
 		if s.UDP {
 			task := &Task{
+				GID:       gid,
 				Host:      host,
 				Protocol:  "udp",
 				Ranges:    ranges,
@@ -233,6 +236,7 @@ func NewCmdWarner(cmds string) *CmdWarner {
 //OnWarning is the callback on one taks is completed.
 func (c CmdWarner) OnWarning(task *Task, err error) (back interface{}) {
 	cmd := exec.Command("bash", "-c", c.Cmds)
+	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_GID=%v", task.GID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_ERROR=%v", err))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_HOST=%v", task.Host))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("SS_PROTO=%v", task.Protocol))

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Centny/gwf/log"
 	"github.com/Centny/gwf/routing"
@@ -38,8 +39,9 @@ var cfgfile = "conf/sscanner.conf"
 var sharedScanner *sscanner.Scanner
 
 func onTime(i uint64) error {
-	log.I("Scanner start %v scan", i)
-	sharedScanner.Scan(loadConf())
+	gid := fmt.Sprintf("%v-%03d", time.Now().Format("2006-01-02"), i)
+	log.I("Scanner start %v scan", gid)
+	sharedScanner.Scan(gid, loadConf())
 	return nil
 }
 
