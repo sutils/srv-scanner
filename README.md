@@ -41,3 +41,12 @@ warner=echo $SS_HOST $SS_PROTO $SS_NEW $SS_NEW_LEN $SS_MISSING $SS_MISSING_LEN $
 #load the whitelist configure.
 @l:sscanner-hosts.conf
 ```
+
+* Warner environment
+  * `$SS_HOST` the host is scaned
+  * `$SS_PROTO` the protocol is scaned
+  * `$SS_NEW` the new port is found and not in the withelist
+  * `$SS_NEW_LEN` the size of new port is found and not in the whitelist
+  * `$SS_MISSING` the missing port is the port in whitelist and out of service
+  * `$SS_MISSING` the size of missing port
+  * `$SS_ERROR` the error message of execute scan
