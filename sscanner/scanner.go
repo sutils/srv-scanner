@@ -24,6 +24,7 @@ type Warner interface {
 //Task is the scan task by host/protocol
 type Task struct {
 	GID       string //the group id of task
+	Name      string
 	Host      string
 	Protocol  string
 	Ranges    [2]int
@@ -68,10 +69,16 @@ func NewScanner(tcp, udp bool) *Scanner {
 func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 	s.lck.Lock()
 	defer s.lck.Unlock()
-	hosts := strings.Split(cfg.Val2("hosts", ""), ",")
+	confHosts := strings.Split(cfg.Val2("hosts", ""), "\n")
 	var err error
-	for _, host := range hosts {
-		wlConf := cfg.Val2(host, "")
+	for _, confHost := range confHosts {
+		confHost = strings.Split(strings.TrimSpace(confHost), "#")[0]
+		if len(confHost) < 1 {
+			continue
+		}
+		nameHost := strings.SplitN(confHost, "=", 2)
+		name := nameHost[0]
+		wlConf := cfg.Val2(name, "")
 		wlLines := strings.Split(wlConf, "\n")
 		tcpWL := map[int]string{}
 		udpWL := map[int]string{}
@@ -82,24 +89,24 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 				parts := strings.SplitN(wlLine, "-", 2)
 				ranges[0], err = strconv.Atoi(parts[0])
 				if err != nil {
-					log.E("Scanner read ranges line on %v fail with %v, the line is:%v", host, err, wlLine)
+					log.E("Scanner read ranges line on %v fail with %v, the line is:%v", name, err, wlLine)
 					continue
 				}
 				ranges[1], err = strconv.Atoi(parts[1])
 				if err != nil {
-					log.E("Scanner read ranges line on %v fail with %v, the line is:%v", host, err, wlLine)
+					log.E("Scanner read ranges line on %v fail with %v, the line is:%v", name, err, wlLine)
 					continue
 				}
 				continue
 			}
 			parts := regexp.MustCompile("[/\\s#]+").Split(wlLine, -1)
 			if len(parts) < 3 {
-				log.E("Scanner read whitelist on %v and one invalid line is found:%v", host, wlLine)
+				log.E("Scanner read whitelist on %v and one invalid line is found:%v", name, wlLine)
 				continue
 			}
 			port, err := strconv.Atoi(parts[0])
 			if err != nil {
-				log.E("Scanner read whitelist on %v and one invalid line is found:%v", host, wlLine)
+				log.E("Scanner read whitelist on %v and one invalid line is found:%v", name, wlLine)
 				continue
 			}
 			if parts[1] == "tcp" {
@@ -108,29 +115,39 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 				udpWL[port] = parts[2]
 			}
 		}
-		if s.TCP {
-			task := &Task{
-				GID:       gid,
-				Host:      host,
-				Protocol:  "tcp",
-				Ranges:    ranges,
-				Whitelist: tcpWL,
-				New:       map[int]string{},
-				Missing:   map[int]string{},
-			}
-			s.tcpTasks <- task
+		hosts := []string{}
+		if len(nameHost) > 1 {
+			hosts = strings.Split(nameHost[1], ",")
+		} else {
+			hosts = []string{name}
 		}
-		if s.UDP {
-			task := &Task{
-				GID:       gid,
-				Host:      host,
-				Protocol:  "udp",
-				Ranges:    ranges,
-				Whitelist: udpWL,
-				New:       map[int]string{},
-				Missing:   map[int]string{},
+		for _, host := range hosts {
+			if s.TCP {
+				task := &Task{
+					GID:       gid,
+					Name:      name,
+					Host:      host,
+					Protocol:  "tcp",
+					Ranges:    ranges,
+					Whitelist: tcpWL,
+					New:       map[int]string{},
+					Missing:   map[int]string{},
+				}
+				s.tcpTasks <- task
 			}
-			s.udpTasks <- task
+			if s.UDP {
+				task := &Task{
+					GID:       gid,
+					Name:      name,
+					Host:      host,
+					Protocol:  "udp",
+					Ranges:    ranges,
+					Whitelist: udpWL,
+					New:       map[int]string{},
+					Missing:   map[int]string{},
+				}
+				s.udpTasks <- task
+			}
 		}
 	}
 }
@@ -184,7 +201,7 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 		last["missing"] = missingRecord
 		last["last"] = util.Now()
 		s.recorderLck.Lock()
-		s.recorder[fmt.Sprintf("%v/%v", task.Host, task.Protocol)] = last
+		s.recorder[fmt.Sprintf("%v/%v/%v", task.Name, task.Host, task.Protocol)] = last
 		s.recorderLck.Unlock()
 
 	}
