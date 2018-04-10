@@ -2,6 +2,7 @@ package sscanner
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -37,10 +38,11 @@ type Task struct {
 
 //Scanner is tool for scanning hosts and alert when port is not in whitelist.
 type Scanner struct {
-	tcpTasks chan *Task
-	udpTasks chan *Task
-	running  bool
-	lck      sync.RWMutex
+	tcpTasks  chan *Task
+	udpTasks  chan *Task
+	running   bool
+	scanLck   sync.RWMutex
+	detectLck sync.RWMutex
 
 	TCP    bool
 	UDP    bool
@@ -54,9 +56,10 @@ type Scanner struct {
 //NewScanner is the creator of Scanner.
 func NewScanner(tcp, udp bool) *Scanner {
 	return &Scanner{
-		tcpTasks:    make(chan *Task, 1000),
-		udpTasks:    make(chan *Task, 1000),
-		lck:         sync.RWMutex{},
+		tcpTasks:    make(chan *Task),
+		udpTasks:    make(chan *Task),
+		scanLck:     sync.RWMutex{},
+		detectLck:   sync.RWMutex{},
 		TCP:         tcp,
 		UDP:         udp,
 		Warner:      &NoneWarner{},
@@ -67,8 +70,8 @@ func NewScanner(tcp, udp bool) *Scanner {
 
 //Scan will send the scan task to runner pool by configure.
 func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
-	s.lck.Lock()
-	defer s.lck.Unlock()
+	s.scanLck.Lock()
+	defer s.scanLck.Unlock()
 	confHosts := strings.Split(cfg.Val2("hosts", ""), "\n")
 	var err error
 	for _, confHost := range confHosts {
@@ -152,6 +155,104 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 	}
 }
 
+func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
+	s.scanLck.Lock()
+	defer s.scanLck.Unlock()
+	scanning := map[string]bool{}
+	confHosts := strings.Split(cfg.Val2("hosts", ""), "\n")
+	for _, confHost := range confHosts {
+		confHost = strings.Split(strings.TrimSpace(confHost), "#")[0]
+		if len(confHost) < 1 {
+			continue
+		}
+		nameHost := strings.SplitN(confHost, "=", 2)
+		name := nameHost[0]
+		hosts := []string{name}
+		if len(nameHost) > 1 {
+			hosts = strings.Split(nameHost[1], ",")
+		}
+		for _, host := range hosts {
+			ips, err := net.LookupIP(host)
+			if err != nil {
+				log.E("lookup ip by host(%v) fail with %v", host, err)
+				continue
+			}
+			for _, ip := range ips {
+				scanning[ip.String()] = true
+				break
+			}
+		}
+	}
+	//
+	confDetectors := strings.Split(cfg.Val2("detector", ""), "\n")
+	for _, confDetector := range confDetectors {
+		confDetector = strings.Split(strings.TrimSpace(confDetector), "#")[0]
+		if len(confDetector) < 1 {
+			continue
+		}
+		hosts, err := s.ParseCIDR(confDetector)
+		if err != nil {
+			log.E("parsing cidr by %v fail with %v", confDetector, err)
+			continue
+		}
+		tcpWL := map[int]string{}
+		udpWL := map[int]string{}
+		ranges := [2]int{0, 65535}
+		for _, host := range hosts {
+			if s.TCP {
+				task := &Task{
+					GID:       gid,
+					Name:      "Detector",
+					Host:      host,
+					Protocol:  "tcp",
+					Ranges:    ranges,
+					Whitelist: tcpWL,
+					New:       map[int]string{},
+					Missing:   map[int]string{},
+				}
+				s.tcpTasks <- task
+			}
+			if s.UDP {
+				task := &Task{
+					GID:       gid,
+					Name:      "Detector",
+					Host:      host,
+					Protocol:  "udp",
+					Ranges:    ranges,
+					Whitelist: udpWL,
+					New:       map[int]string{},
+					Missing:   map[int]string{},
+				}
+				s.udpTasks <- task
+			}
+		}
+	}
+
+}
+
+func (s *Scanner) inc(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
+}
+
+func (s *Scanner) ParseCIDR(cidr string) ([]string, error) {
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+
+	var ips []string
+	for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); s.inc(ip) {
+		ips = append(ips, ip.String())
+	}
+	// remove network address and broadcast address
+	return ips[1 : len(ips)-1], nil
+}
+
 func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 	log.D("Scanner(%v/%v) is started", name, runid)
 	for s.running {
@@ -194,6 +295,9 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 		missingRecord := util.Map{}
 		for port, status := range task.Missing {
 			missingRecord[fmt.Sprintf("%v", port)] = status
+		}
+		if task.Name == "Detector" && len(newRecord) < 1 && len(missingRecord) < 1 {
+			continue
 		}
 		last["error"] = nil
 		last["warn"] = warn

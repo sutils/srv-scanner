@@ -27,7 +27,8 @@ func main() {
 	sharedScanner.Start(conf.IntValV("tcp_runner", util.CPU()), conf.IntValV("udp_runner", util.CPU()))
 	//
 	//initial schedule
-	timer.Register5(conf.Int64ValV("delay", 300000), onTime, false, true)
+	timer.Register5(conf.Int64ValV("delay", 300000), onScanTime, false, true)
+	timer.Register5(conf.Int64ValV("detect_delay", 86400000), onDetectTime, false, false)
 	//
 	//start web server.
 	routing.HFunc("^/adm/status(\\?.*)?$", sharedScanner.StatusH)
@@ -38,10 +39,17 @@ func main() {
 var cfgfile = "conf/sscanner.conf"
 var sharedScanner *sscanner.Scanner
 
-func onTime(i uint64) error {
+func onScanTime(i uint64) error {
 	gid := fmt.Sprintf("%v-%03d", time.Now().Format("2006-01-02"), i)
 	log.I("Scanner start %v scan", gid)
 	sharedScanner.Scan(gid, loadConf())
+	return nil
+}
+
+func onDetectTime(i uint64) error {
+	gid := fmt.Sprintf("%v-%03d", time.Now().Format("2006-01-02"), i)
+	log.I("Scanner start %v detect", gid)
+	sharedScanner.Detect(gid, loadConf())
 	return nil
 }
 
