@@ -28,7 +28,7 @@ func main() {
 	//
 	//initial schedule
 	timer.Register5(conf.Int64ValV("delay", 300000), onScanTime, false, true)
-	timer.Register5(conf.Int64ValV("detect_delay", 86400000), onDetectTime, false, false)
+	timer.Register5(conf.Int64ValV("detect_delay", 86400000), onDetectTime, false, true)
 	//
 	//start web server.
 	routing.HFunc("^/adm/status(\\?.*)?$", sharedScanner.StatusH)
