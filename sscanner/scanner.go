@@ -299,8 +299,10 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 		if task.Name == "Detector" && len(newRecord) < 1 && len(missingRecord) < 1 {
 			continue
 		}
-		if cname, err := net.LookupCNAME(task.Host); err == nil {
-			last["cname"] = cname
+		if domains, err := net.LookupAddr(task.Host); err == nil {
+			last["domains"] = domains
+		} else {
+			log.W("lookup domains by host(%v) fail with %v", task.Host, err)
 		}
 		last["error"] = nil
 		last["warn"] = warn
