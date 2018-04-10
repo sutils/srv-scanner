@@ -299,6 +299,9 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 		if task.Name == "Detector" && len(newRecord) < 1 && len(missingRecord) < 1 {
 			continue
 		}
+		if cname, err := net.LookupCNAME(task.Host); err == nil {
+			last["cname"] = cname
+		}
 		last["error"] = nil
 		last["warn"] = warn
 		last["new"] = newRecord
