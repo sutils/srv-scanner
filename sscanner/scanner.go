@@ -190,15 +190,25 @@ func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
 		if len(confDetector) < 1 {
 			continue
 		}
-		hosts, err := s.ParseCIDR(confDetector)
+		parts := strings.Split(confDetector, ",")
+		excludes := map[string]bool{}
+		if len(parts) > 1 {
+			for _, ex := range parts[1:] {
+				excludes[ex] = true
+			}
+		}
+		hosts, err := s.ParseCIDR(parts[0])
 		if err != nil {
-			log.E("parsing cidr by %v fail with %v", confDetector, err)
+			log.E("parsing cidr by %v fail with %v", parts[0], err)
 			continue
 		}
 		tcpWL := map[int]string{}
 		udpWL := map[int]string{}
 		ranges := [2]int{0, 65535}
 		for _, host := range hosts {
+			if excludes[host] {
+				continue
+			}
 			if s.TCP {
 				task := &Task{
 					GID:       gid,
