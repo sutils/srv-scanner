@@ -206,7 +206,7 @@ func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
 		udpWL := map[int]string{}
 		ranges := [2]int{0, 65535}
 		for _, host := range hosts {
-			if excludes[host] {
+			if excludes[host] || scanning[host] {
 				continue
 			}
 			if s.TCP {
@@ -314,14 +314,20 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 		} else {
 			log.W("lookup domains by host(%v) fail with %v", task.Host, err)
 		}
-		last["error"] = nil
-		last["warn"] = warn
-		last["new"] = newRecord
-		last["missing"] = missingRecord
-		last["last"] = util.Now()
-		s.recorderLck.Lock()
-		s.recorder[fmt.Sprintf("%v/%v/%v", task.Name, task.Host, task.Protocol)] = last
-		s.recorderLck.Unlock()
+		if len(newRecord) > 0 || len(missingRecord) > 0 {
+			last["error"] = nil
+			last["warn"] = warn
+			last["new"] = newRecord
+			last["missing"] = missingRecord
+			last["last"] = util.Now()
+			s.recorderLck.Lock()
+			s.recorder[fmt.Sprintf("%v/%v/%v", task.Name, task.Host, task.Protocol)] = last
+			s.recorderLck.Unlock()
+		} else {
+			s.recorderLck.Lock()
+			delete(s.recorder, fmt.Sprintf("%v/%v/%v", task.Name, task.Host, task.Protocol))
+			s.recorderLck.Unlock()
+		}
 
 	}
 	log.D("Scanner(%v/%v) is stopped", name, runid)
