@@ -38,15 +38,18 @@ type Task struct {
 
 //Scanner is tool for scanning hosts and alert when port is not in whitelist.
 type Scanner struct {
-	tcpTasks  chan *Task
-	udpTasks  chan *Task
-	running   bool
-	scanLck   sync.RWMutex
-	detectLck sync.RWMutex
+	tcpTasks   chan *Task
+	udpTasks   chan *Task
+	syncWait   sync.WaitGroup
+	runnerWait sync.WaitGroup
+	running    bool
+	stopping   bool
+	scanLck    sync.RWMutex
+	detectLck  sync.RWMutex
 
-	TCP    bool
-	UDP    bool
-	Warner Warner
+	enableTCP bool
+	enableUDP bool
+	Warner    Warner
 
 	//
 	recorder    util.Map
@@ -54,14 +57,14 @@ type Scanner struct {
 }
 
 //NewScanner is the creator of Scanner.
-func NewScanner(tcp, udp bool) *Scanner {
+func NewScanner() *Scanner {
 	return &Scanner{
 		tcpTasks:    make(chan *Task),
 		udpTasks:    make(chan *Task),
+		syncWait:    sync.WaitGroup{},
+		runnerWait:  sync.WaitGroup{},
 		scanLck:     sync.RWMutex{},
 		detectLck:   sync.RWMutex{},
-		TCP:         tcp,
-		UDP:         udp,
 		Warner:      &NoneWarner{},
 		recorder:    util.Map{},
 		recorderLck: sync.RWMutex{},
@@ -70,6 +73,9 @@ func NewScanner(tcp, udp bool) *Scanner {
 
 //Scan will send the scan task to runner pool by configure.
 func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
+	if s.stopping {
+		return
+	}
 	s.scanLck.Lock()
 	defer s.scanLck.Unlock()
 	confHosts := strings.Split(cfg.Val2("hosts", ""), "\n")
@@ -125,7 +131,7 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 			hosts = []string{name}
 		}
 		for _, host := range hosts {
-			if s.TCP {
+			if s.enableTCP {
 				task := &Task{
 					GID:       gid,
 					Name:      name,
@@ -138,7 +144,7 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 				}
 				s.tcpTasks <- task
 			}
-			if s.UDP {
+			if s.enableUDP {
 				task := &Task{
 					GID:       gid,
 					Name:      name,
@@ -155,7 +161,11 @@ func (s *Scanner) Scan(gid string, cfg *util.Fcfg) {
 	}
 }
 
+//Detect will send the scan task to runner pool by detector configure.
 func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
+	if s.stopping {
+		return
+	}
 	s.scanLck.Lock()
 	defer s.scanLck.Unlock()
 	scanning := map[string]bool{}
@@ -197,7 +207,7 @@ func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
 				excludes[ex] = true
 			}
 		}
-		hosts, err := s.ParseCIDR(parts[0])
+		hosts, err := s.parseCIDR(parts[0])
 		if err != nil {
 			log.E("parsing cidr by %v fail with %v", parts[0], err)
 			continue
@@ -209,7 +219,7 @@ func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
 			if excludes[host] || scanning[host] {
 				continue
 			}
-			if s.TCP {
+			if s.enableTCP {
 				task := &Task{
 					GID:       gid,
 					Name:      "Detector",
@@ -222,7 +232,7 @@ func (s *Scanner) Detect(gid string, cfg *util.Fcfg) {
 				}
 				s.tcpTasks <- task
 			}
-			if s.UDP {
+			if s.enableUDP {
 				task := &Task{
 					GID:       gid,
 					Name:      "Detector",
@@ -249,7 +259,7 @@ func (s *Scanner) inc(ip net.IP) {
 	}
 }
 
-func (s *Scanner) ParseCIDR(cidr string) ([]string, error) {
+func (s *Scanner) parseCIDR(cidr string) ([]string, error) {
 	ip, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return nil, err
@@ -264,12 +274,20 @@ func (s *Scanner) ParseCIDR(cidr string) ([]string, error) {
 }
 
 func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
+	s.runnerWait.Add(1)
+	defer s.runnerWait.Done()
 	log.D("Scanner(%v/%v) is started", name, runid)
-	for s.running {
+	runOne := func() {
 		task := <-tasks
+		if task == nil {
+			return
+		}
+		s.syncWait.Add(1)
+		defer s.syncWait.Done()
 		last := util.Map{}
 		task.nmap = NewNMAP(task.Host, task.Protocol)
 		task.nmap.Ranges = task.Ranges
+		log.D("Scanner(%v) scan %v/%v is started by ranges(%v)", runid, task.Host, task.Protocol, task.Ranges)
 		ports, err := task.nmap.Scan()
 		if err != nil {
 			log.E("Scanner(%v) scan %v/%v fail with %v", runid, task.Host, task.Protocol, err)
@@ -279,7 +297,7 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 			s.recorderLck.Lock()
 			s.recorder[fmt.Sprintf("%v/%v", task.Host, task.Protocol)] = last
 			s.recorderLck.Unlock()
-			continue
+			return
 		}
 		for port, status := range ports {
 			if task.Whitelist[port] != status {
@@ -307,7 +325,7 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 			missingRecord[fmt.Sprintf("%v", port)] = status
 		}
 		if task.Name == "Detector" && len(newRecord) < 1 && len(missingRecord) < 1 {
-			continue
+			return
 		}
 		if domains, err := net.LookupAddr(task.Host); err == nil {
 			last["domains"] = domains
@@ -328,7 +346,9 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 			delete(s.recorder, fmt.Sprintf("%v/%v/%v", task.Name, task.Host, task.Protocol))
 			s.recorderLck.Unlock()
 		}
-
+	}
+	for s.running {
+		runOne()
 	}
 	log.D("Scanner(%v/%v) is stopped", name, runid)
 }
@@ -336,6 +356,8 @@ func (s *Scanner) runner(name string, runid int, tasks chan *Task) {
 //Start will start the scan task runner.
 func (s *Scanner) Start(tcp, udp int) {
 	s.running = true
+	s.enableTCP = tcp > 0
+	s.enableUDP = udp > 0
 	runid := 0
 	for i := 0; i < tcp; i++ {
 		go s.runner("tcp", runid, s.tcpTasks)
@@ -345,6 +367,17 @@ func (s *Scanner) Start(tcp, udp int) {
 		go s.runner("udp", runid, s.udpTasks)
 		runid++
 	}
+}
+
+//Stop will wait all scan task done then stop all runner
+func (s *Scanner) Stop() {
+	s.stopping = true
+	s.syncWait.Wait()
+	s.running = false
+	close(s.tcpTasks)
+	close(s.udpTasks)
+	s.runnerWait.Wait()
+	log.D("Scanner is stopped")
 }
 
 //StatusH is the web handler to show the current status.

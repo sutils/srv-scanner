@@ -22,7 +22,7 @@ func main() {
 	conf.Print()
 	//
 	//initial scanner.
-	sharedScanner = sscanner.NewScanner(conf.IntValV("enable_tcp", 0) > 0, conf.IntValV("enable_udp", 0) > 0)
+	sharedScanner = sscanner.NewScanner()
 	sharedScanner.Warner = sscanner.NewCmdWarner(conf.Val2("warner", ""))
 	sharedScanner.Start(conf.IntValV("tcp_runner", util.CPU()), conf.IntValV("udp_runner", util.CPU()))
 	//
